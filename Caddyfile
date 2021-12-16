@@ -1,0 +1,19 @@
+localhost {
+	root * /srv
+	@rewritable {
+		not file
+		not path /assets/* /manager/* *.php
+	}
+	rewrite @rewritable /index.php?{query}&q={path}
+	rewrite /manager/ /manager/index.php
+	@exec {
+		path *.php
+	}
+	reverse_proxy @exec evolution_php:9000 {
+		transport fastcgi {
+			root /evolution/public
+			split .php
+		}
+	}
+	file_server
+}
