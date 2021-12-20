@@ -17,9 +17,9 @@ LABEL org.opencontainers.image.authors="Jan Giesenberg <749@github.com>"
 
 EXPOSE 9000
 
-RUN apk add --no-cache rsync freetype-dev libpng-dev jpeg-dev unzip sudo bash gettext libxml2-dev curl-dev oniguruma-dev\
+RUN apk add --no-cache rsync freetype-dev libpng-dev jpeg-dev unzip sudo bash gettext libxml2-dev curl-dev oniguruma-dev libzip-dev\
 	&& docker-php-ext-configure gd --with-freetype --with-jpeg \
-	&& docker-php-ext-install -j$(nproc) json gd mysqli pdo pdo_mysql simplexml curl mbstring opcache\
+	&& docker-php-ext-install -j$(nproc) json gd mysqli pdo pdo_mysql simplexml curl mbstring opcache zip\
 	&& rm -rf /usr/src/php/
 
 COPY --chown=www-data files/docker-entrypoint.sh /entrypoint.sh
