@@ -13,6 +13,9 @@
 
 FROM php:7-fpm-alpine
 
+ARG SOURCE_VERSION=3.2.5
+ENV MODX_CURRENT_VERSION=${SOURCE_VERSION}
+
 LABEL org.opencontainers.image.authors="Jan Giesenberg <749@github.com>"
 
 EXPOSE 9000
