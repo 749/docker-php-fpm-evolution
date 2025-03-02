@@ -2,95 +2,124 @@ name: Docker Build
 
 on:
   push:
-    # Publish `main` as Docker `edge` image.
+    # Publish 'main' as Docker 'edge' image.
     branches:
       - main
-
-    # Publish `v1.2.3` tags as releases.
+    # Publish 'v1.2.3' tags as releases.
     tags:
       - v*
-
   # Run tests for any PRs.
   pull_request:
-
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
   schedule:
-    # run every sunday at 00:00
-    - cron: '0 0 * * 0'
+    # run every Sunday at 00:00
+    - cron: "0 0 * * 0"
 
 env:
-  IMAGE_NAME:        php-fpm-evolution
-  IMAGE_TITLE:       php-fpm-evolution
-  IMAGE_DESCRIPTION: Docker container for Evolution CMS 1.X
+  IMAGE_NAME: php-fpm-evolution
+  IMAGE_TITLE: php-fpm-evolution
+  IMAGE_DESCRIPTION: Docker container for Evolution CMS
+  # Global variable for the GitHub tags API URL.
+  GITHUB_TAG_API_URL: "https://api.github.com/repos/evolution-cms/evolution/tags"
 
 jobs:
-  # Build images.
   build:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v2
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v1
-      with:
-        platforms: all
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
 
-    - name: Set up Docker Buildx
-      id: buildx
-      uses: docker/setup-buildx-action@v1
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Login to DockerHub
-      if: github.event_name != 'pull_request'
-      uses: docker/login-action@v1 
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Login to DockerHub
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Prepare
-      id: prep
-      run: |
-        # find the newest 1.X release
-        EVOLUTION_VERSION=$(curl "https://api.github.com/repos/evolution-cms/evolution/tags" | jq -r '[.[]|select(.name | startswith("1.")).name] | first')
-        DOCKER_IMAGE=g749/$IMAGE_NAME
+      - name: Prepare
+        id: prep
+        run: |
+          set -euo pipefail
+          # Retrieve the latest tag from the upstream repository that matches the specified version pattern.
+          # This makes it easy to adjust for a different version range or URL.
+          SOURCE_TAG=$(curl --fail-with-body --retry 3 --location "$GITHUB_TAG_API_URL" | jq -r '[.[] | .name] | first')
+          IMAGE_REPO=g749/$IMAGE_NAME
 
-        # Strip git ref prefix from version
-        VERSION_FULL=$(echo "${EVOLUTION_VERSION:=1.0.0}" | sed 's,\-.*$,,')
-        VERSION_MINOR=$(echo "$VERSION_FULL" | sed 's,\.[^.]*$,,')
-        VERSION_MAJOR=$(echo "$VERSION_MINOR" | sed 's,\.[^.]*$,,')
+          if [ -z "$SOURCE_TAG" ]; then
+            echo "ERROR: Source version not found!"
+            exit 1
+          else
+            echo "Found source version: $SOURCE_TAG"
+          fi
 
-        # Use Docker `edge` tag convention and pr-<number> for pull requests
-        [ ${{ github.ref }} == "refs/head/main" ] && VERSION_FULL=edge
-        [ ${{ github.ref }} == refs/pull/* ] && VERSION_FULL=pr-${{ github.event.number }}
+          # Remove any git ref suffix from the version and set a default if necessary.
+          BASE_VERSION=$(echo "${SOURCE_TAG:=1.0.0}" | sed 's,\-.*$,,' )
+          FINAL_VERSION=$BASE_VERSION
 
-        TAGS="${DOCKER_IMAGE}:${VERSION_FULL}"  
-        [ "$VERSION_FULL" != "edge" -a ${VERSION_FULL:0:3} != "pr-" ] && TAGS="$TAGS,${DOCKER_IMAGE}:${VERSION_MINOR},${DOCKER_IMAGE}:${VERSION_MAJOR},${DOCKER_IMAGE}:latest"
+          # Compute the minor and major version numbers from the base version.
+          VERSION_MINOR=$(echo "$BASE_VERSION" | sed 's,\.[^.]*$,,' )
+          VERSION_MAJOR=$(echo "$VERSION_MINOR" | sed 's,\.[^.]*$,,' )
 
-        echo "EVOLUTION_VERSION=${VERSION_FULL}" >> $GITHUB_ENV
-        echo "EVOLUTION_VERSION=${VERSION_FULL}"
-        echo "TAGS=${TAGS}"
-        echo ::set-output name=version::${VERSION_FULL}
-        echo ::set-output name=tags::${TAGS}
-        echo ::set-output name=created::$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          # Determine the Docker tag based on the event trigger:
+          # - For scheduled runs on the main branch, use the computed version.
+          # - For push events on main (non-scheduled), override with 'edge'.
+          # - For pull requests, override with 'pr-<number>'.
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            if [[ "${{ github.event_name }}" != "schedule" ]]; then
+              FINAL_VERSION=edge
+            else
+              echo "Scheduled run on main branch: using computed version tag ($FINAL_VERSION)"
+            fi
+          elif [[ "${{ github.ref }}" == refs/pull/* ]]; then
+            FINAL_VERSION="pr-${{ github.event.number }}"
+          fi
 
-    - name: Build and push
-      id: docker_build
-      uses: docker/build-push-action@v2
-      with:
-        builder: ${{ steps.buildx.outputs.name }}
-        context: build/
-        platforms: linux/amd64,linux/386,linux/arm64,linux/arm/v7,linux/arm/v6,linux/ppc64le
-        push: ${{ github.event_name != 'pull_request' }}
-        tags: ${{ steps.prep.outputs.tags }}
-        build-args: |
-          EVOLUTION_VERSION=${{ steps.prep.outputs.version }}
-        labels: |
-          org.opencontainers.image.title=$IMAGE_TITLE
-          org.opencontainers.image.description=$IMAGE_DESCRIPTION
-          org.opencontainers.image.vendor=g749
-          org.opencontainers.image.url=${{ github.event.repository.html_url }}
-          org.opencontainers.image.source=${{ github.event.repository.html_url }}
-          org.opencontainers.image.created=${{ steps.prep.outputs.created }}
-          org.opencontainers.image.revision=${{ github.sha }}
-          org.opencontainers.image.version=${{ steps.prep.outputs.version }}
+          # Construct the Docker image tags.
+          TAGS="${IMAGE_REPO}:${FINAL_VERSION}"
+          if [[ "$FINAL_VERSION" != "edge" && "${FINAL_VERSION:0:3}" != "pr-" ]]; then
+            TAGS="$TAGS,${IMAGE_REPO}:${VERSION_MINOR},${IMAGE_REPO}:${VERSION_MAJOR},${IMAGE_REPO}:latest"
+          fi
 
+          echo "TAGS=${TAGS}"
+
+          # Set step outputs for use in later steps.
+          echo "source_version=${BASE_VERSION}" | tee -a $GITHUB_OUTPUT
+          echo "image_repo=${IMAGE_REPO}" | tee -a $GITHUB_OUTPUT
+          echo "version=${FINAL_VERSION}" | tee -a $GITHUB_OUTPUT
+          echo "tags=${TAGS}" | tee -a $GITHUB_OUTPUT
+          echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" | tee -a $GITHUB_OUTPUT
+
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          pull: true
+          builder: ${{ steps.buildx.outputs.name }}
+          context: build/
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.prep.outputs.tags }}
+          cache-from: type=registry,ref=${{ steps.prep.outputs.image_repo }}:cache
+          cache-to: type=registry,ref=${{ steps.prep.outputs.image_repo }}:cache,mode=max
+          build-args: |
+            SOURCE_VERSION=${{ steps.prep.outputs.source_version }}
+          labels: |
+            org.opencontainers.image.title=$IMAGE_TITLE
+            org.opencontainers.image.description=$IMAGE_DESCRIPTION
+            org.opencontainers.image.vendor=g749
+            org.opencontainers.image.url=${{ github.event.repository.html_url }}
+            org.opencontainers.image.source=${{ github.event.repository.html_url }}
+            org.opencontainers.image.created=${{ steps.prep.outputs.created }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.prep.outputs.version }}

@@ -45,5 +45,6 @@ fi
 chown -R www-data:www-data $PATH_APP_BASE
 cd $PATH_APP_PUBLIC
 
+echo "Latest version of ModX Evolution is: $MODX_NEWEST_VERSION"
 echo "Starting up $@"
 exec "$@"
